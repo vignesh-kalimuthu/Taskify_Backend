@@ -1,8 +1,74 @@
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const User = require("../models/User");
+const crypto = require("crypto");
 
 const db = require("../config/db");
+
+exports.forgotPassword = (req, res) => {
+  const { email } = req.body;
+
+  if (!email) return res.status(400).json({ message: "Email required" });
+
+  User.findByEmail(email, (err, users) => {
+    if (users.length === 0)
+      return res.status(404).json({ message: "User not found" });
+
+    const user = users[0];
+    const token = crypto.randomBytes(32).toString("hex");
+    const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+
+    db.query(
+      "INSERT INTO password_resets (user_id, token_hash, expires_at) VALUES (?, ?, ?)",
+      [user.id, tokenHash, expiresAt],
+      (err2) => {
+        if (err2) throw err2;
+
+        const resetLink = `${process.env.FRONTEND_URL}/reset-password?token=${token}`;
+
+        // REAL APPS SEND EMAIL. FOR DEV, RETURN URL:
+        res.json({ message: "Reset link sent", resetLink });
+      }
+    );
+  });
+};
+
+exports.resetPassword = (req, res) => {
+  const { token, newPassword } = req.body;
+
+  if (!token || !newPassword)
+    return res.status(400).json({ message: "Missing fields" });
+
+  const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+
+  db.query(
+    "SELECT * FROM password_resets WHERE token_hash = ?",
+    [tokenHash],
+    async (err, results) => {
+      if (results.length === 0)
+        return res.status(400).json({ message: "Invalid or expired token" });
+
+      const reset = results[0];
+
+      if (new Date(reset.expires_at) < new Date())
+        return res.status(400).json({ message: "Token expired" });
+
+      const hashed = await bcrypt.hash(newPassword, 10);
+
+      db.query(
+        "UPDATE users SET password = ? WHERE id = ?",
+        [hashed, reset.user_id],
+        (err2) => {
+          if (err2) throw err2;
+
+          db.query("DELETE FROM password_resets WHERE id = ?", [reset.id]);
+          res.json({ message: "Password reset successfully" });
+        }
+      );
+    }
+  );
+};
 
 exports.changePassword = (req, res) => {
   const userId = req.user.id;
