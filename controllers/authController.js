@@ -21,6 +21,7 @@ exports.changePassword = (req, res) => {
     if (!isMatch)
       return res.status(401).json({ message: "Incorrect current password" });
     const hashed = await bcrypt.hash(newPassword, 10);
+    console.log("Hashed new password:", hashed);
 
     User.updatePassword(userId, hashed, (err2) => {
       if (err2) throw err2;
